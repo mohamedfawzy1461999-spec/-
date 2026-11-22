@@ -94,12 +94,11 @@ http.createServer((req, res) => {
     });
   }
 
-  // توجيه المسار الرئيسي وصور وفولدرات public بشكل سليّم
   let targetPath = url.pathname === "/" ? "index.html" : url.pathname;
   let f = path.join(PUB, targetPath);
   
-  if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) {
-    f = path.join(PUB, "index.html"); // Fallback for SPA routing if needed
+  if (!f.startsWith(PUB) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) {
+    f = path.join(PUB, "index.html");
   }
 
   if (!fs.existsSync(f)) { 
