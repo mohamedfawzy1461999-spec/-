@@ -93,31 +93,41 @@ http.createServer((req, res) => {
       res.end(JSON.stringify({ ok: true, view: state ? view(u) : null }));
     });
   }
-// مثال لحفظ بيانات الحضور في الـ Backend وتجنب ضياعها
-let attendanceRecords = []; // أو ربطها بقاعدة بيانات سحابية خفيفة
 
-app.post('/api/attendance', (req, res) => {
-    const { employeeId, branch, timestamp, photo, location } = req.body;
-    
-    // التحقق وعدم تكرار تسجيل نفس الموظف مرتين في اليوم
-    const existing = attendanceRecords.find(item => item.employeeId === employeeId && item.date === new Date().toISOString().slice(0,10));
-    if (existing) {
-        return res.status(400).json({ success: false, message: 'تم تسجيل الحضور مسبقاً اليوم' });
-    }
+  // --- Attendance API Endpoint ---
+  if (url.pathname === "/api/attendance" && req.method === "POST") {
+    let body = ""; req.on("data", d => { body += d; if (body.length > 15e6) req.destroy(); });
+    return req.on("end", () => {
+      let b; try { b = JSON.parse(body); } catch (e) { res.writeHead(400, cors); return res.end(); }
+      
+      if (!state) state = {};
+      if (!state.attendanceRecords) state.attendanceRecords = [];
 
-    attendanceRecords.push({
+      const { employeeId, branch, timestamp, photo, location } = b;
+      const today = new Date().toISOString().slice(0, 10);
+
+      const existing = state.attendanceRecords.find(item => item.employeeId === employeeId && item.date === today);
+      if (existing) {
+        res.writeHead(400, { ...cors, "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ success: false, message: 'تم تسجيل الحضور مسبقاً اليوم' }));
+      }
+
+      state.attendanceRecords.push({
         employeeId,
         branch,
         timestamp: timestamp || new Date(),
         photo,
         location,
-        date: new Date().toISOString().slice(0,10)
+        date: today
+      });
+
+      persist();
+      broadcast();
+
+      res.writeHead(200, { ...cors, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, message: 'تم تسجيل الحضور بنجاح وحفظه' }));
     });
-
-    res.json({ success: true, message: 'تم تسجيل الحضور بنجاح وصفظه' });
-});
-
-  
+  }
   
   const rel = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
   const ROOT_OK = ["/index.html", "/manifest.json", "/sw.js"];   // works with or without a public/ folder
