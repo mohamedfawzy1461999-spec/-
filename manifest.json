@@ -1,1 +1,10 @@
-{"name": "BIM Ismailia", "short_name": "BIM", "start_url": "/", "display": "standalone", "background_color": "#ffffff", "theme_color": "#c8102e", "lang": "ar", "dir": "rtl", "icons": []}
+{
+  "name": "BIM Ismailia",
+  "short_name": "BIM",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#c8102e",
+  "lang": "ar",
+  "dir": "rtl"
+}
