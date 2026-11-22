@@ -94,7 +94,10 @@ http.createServer((req, res) => {
     });
   }
 
-  let f = path.join(PUB, url.pathname === "/" ? "index.html" : url.pathname);
-  if (!f.startsWith(PUB) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end("not found"); }
+  const rel = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+  const ROOT_OK = ["/index.html", "/manifest.json", "/sw.js"];   // works with or without a public/ folder
+  const f = [path.join(PUB, rel), ...(ROOT_OK.includes(rel) ? [path.join(__dirname, rel)] : [])]
+    .find(p => (p.startsWith(PUB + path.sep) || ROOT_OK.includes(rel)) && fs.existsSync(p) && fs.statSync(p).isFile());
+  if (!f) { res.writeHead(404); return res.end("not found"); }
   res.writeHead(200, { "Content-Type": MIME[path.extname(f)] || "application/octet-stream" }); fs.createReadStream(f).pipe(res);
 }).listen(PORT, () => console.log("BIM server on :" + PORT));
