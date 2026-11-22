@@ -94,7 +94,19 @@ http.createServer((req, res) => {
     });
   }
 
-  let f = path.join(PUB, url.pathname === "/" ? "index.html" : url.pathname);
-  if (!f.startsWith(PUB) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end("not found"); }
-  res.writeHead(200, { "Content-Type": MIME[path.extname(f)] || "application/octet-stream" }); fs.createReadStream(f).pipe(res);
+  // توجيه المسار الرئيسي وصور وفولدرات public بشكل سليّم
+  let targetPath = url.pathname === "/" ? "index.html" : url.pathname;
+  let f = path.join(PUB, targetPath);
+  
+  if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) {
+    f = path.join(PUB, "index.html"); // Fallback for SPA routing if needed
+  }
+
+  if (!fs.existsSync(f)) { 
+    res.writeHead(404, cors); 
+    return res.end("not found"); 
+  }
+
+  res.writeHead(200, { ...cors, "Content-Type": MIME[path.extname(f)] || "application/octet-stream" }); 
+  fs.createReadStream(f).pipe(res);
 }).listen(PORT, () => console.log("BIM server on :" + PORT));
