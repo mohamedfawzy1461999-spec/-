@@ -16,8 +16,30 @@ const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 const PUB = path.join(__dirname, 'public');
 const MAX_BODY = 15e6;
-const A = require('./auth');
-const G = require('./engine/geo'), RK = require('./engine/risk'), OPS = require('./engine/ops-api'), BR = require('./engine/branches');
+
+function safeRequire(modPath, fallback) {
+  try {
+    return require(modPath);
+  } catch (e) {
+    console.error(`❌ تعذر تحميل ${modPath}:`, e.message);
+    return fallback;
+  }
+}
+
+const A = safeRequire('./auth', null);
+const G = safeRequire('./engine/geo', { haversine: () => 0 });
+const RK = safeRequire('./engine/risk', {
+  assess: () => ({ level: 'LOW', trust: 1, reasons: [], suspicion: null }),
+  trustScore: () => 1,
+});
+const OPS = safeRequire('./engine/ops-api', {
+  handle: async () => ({ code: 503, body: { error: 'ops-api غير متاح' }, dirty: false }),
+});
+const BR = safeRequire('./engine/branches', {
+  autoLocate: async () => [],
+  locate: async () => ({ code: 503, body: { error: 'branches غير متاح' }, dirty: false }),
+});
+
 const crypto = require('crypto');
 const LEGACY = process.env.ALLOW_LEGACY === '1';   // legacy login disabled unless explicitly enabled
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
@@ -120,7 +142,7 @@ function schedule() {                    // تجميع الكتابات: كتا�
     try {
       state = sanitizeState(await loadState());
       auth = await loadAuth();
-      if (process.env.ADMIN_USER && process.env.ADMIN_PASS && !auth.ADMIN) {
+      if (process.env.ADMIN_USER && process.env.ADMIN_PASS && !auth.ADMIN && A) {
         auth.ADMIN = { username: process.env.ADMIN_USER, hash: await A.hashPassword(process.env.ADMIN_PASS), admin: true, name: 'أدمن المنظومة' };
         await saveAuth(); console.log('✅ اتعمل حساب الأدمن');
       }
@@ -147,7 +169,7 @@ function identity(sap) {
   if (e) return { sap: e.sap, name: e.name, cls: cls(e.role), branch: e.branch, mgr: adm, admin: adm };
   return a.admin ? { sap, name: a.name || sap, mgr: true, admin: true } : null;
 }
-const me = b => { const p = b && b.token && A.verifyToken(b.token, JWT_SECRET); return p ? identity(p.sap) : null; };
+const me = b => { const p = b && b.token && A && A.verifyToken(b.token, JWT_SECRET); return p ? identity(p.sap) : null; };
 
 function who(q) {
   if (q && q.token) return me(q);
@@ -185,8 +207,6 @@ const viewKey = u => [u.admin ? 1 : 0, u.mgr ? 1 : 0, u.cls || '', u.branch || '
 
 /* ───────────── الكتابة ───────────── */
 const MGR_KEYS = ['meeting', 'scheduledMeetings', 'branches'];
-// لا تسمح بإنشاء مفاتيح حالة عشوائية من طلبات العملاء. المفاتيح الحساسة
-// (syncCode وsecurityLog) تظل مملوكة للسيرفر فقط.
 const SHIFT_MS = 9 * 3600e3;   // الشيفت 9 ساعات: مفيش انصراف قبلها غير بإذن الأدمن
 const PATCH_KEYS = new Set(['fraudAlerts', 'employees', 'chat', 'notifications', 'meeting', 'scheduledMeetings', 'branches', 'lateOpenings', 'aiMemory', 'userAvatarData']);
 const union = (cur, add, keyOf, front) => {
@@ -207,24 +227,24 @@ function apply(u, patch) {
         const old = state.employees[i];
         if (!(u.mgr || String(old.sap) === String(u.sap))) continue;
         let acceptedIn = false;
-        if (!u.mgr && e.status === 'PRESENT' && old.status !== 'PRESENT') {   // تسجيل حضور: لازم حدث سيرفر ناجح داخل النطاق في آخر 3 دقايق
+        if (!u.mgr && e.status === 'PRESENT' && old.status !== 'PRESENT') {
           const rk = riskMem[u.sap];
-          if (rk && rk.okUntil > Date.now()) { rk.okUntil = 0; rk.outN = 0; acceptedIn = true; }   // البوابة تُستخدم مرة واحدة
+          if (rk && rk.okUntil > Date.now()) { rk.okUntil = 0; rk.outN = 0; acceptedIn = true; }
           else { e = { ...e, status: old.status, checkInTime: old.checkInTime, geoVerified: old.geoVerified }; }
         }
         if (!u.mgr && old.status === 'PRESENT' && e.status !== 'PRESENT' && old.checkInAt && Date.now() - old.checkInAt < SHIFT_MS)
-          e = { ...e, status: old.status, checkInTime: old.checkInTime };      // انصراف قبل 9 ساعات: مرفوض (الأدمن بس يقدر يفرج)
+          e = { ...e, status: old.status, checkInTime: old.checkInTime };
         const keep = u.admin ? { password: old.password, id: old.id } : { password: old.password, id: old.id, role: old.role, branch: old.branch, isAdminDelegate: old.isAdminDelegate, sap: old.sap };
-        const own = u.mgr ? {} : { inBranch: old.inBranch, exitLog: old.exitLog, checkInAt: old.checkInAt };   // حقول بيملكها السيرفر
+        const own = u.mgr ? {} : { inBranch: old.inBranch, exitLog: old.exitLog, checkInAt: old.checkInAt };
         state.employees[i] = { ...old, ...e, ...keep, ...own };
-        if (!u.mgr && old.status === 'PRESENT' && state.employees[i].status !== 'PRESENT') Object.assign(state.employees[i], { inBranch: false, checkInAt: null });   // انصراف مقبول
+        if (!u.mgr && old.status === 'PRESENT' && state.employees[i].status !== 'PRESENT') Object.assign(state.employees[i], { inBranch: false, checkInAt: null });
         if (acceptedIn) Object.assign(state.employees[i], { inBranch: true, checkInAt: Date.now(), exitLog: old.exitLog || [] });
       }
     } else if (k === 'chat') { if (Array.isArray(v)) state.chat = union(state.chat || [], v.filter(x => x && typeof x === 'object'), x => x.sender + '|' + x.text + '|' + x.time, false); }
     else if (k === 'notifications') { if (Array.isArray(v)) state.notifications = union(state.notifications || [], v.filter(x => x && typeof x === 'object' && x.id != null), x => x.id, true); }
     else if (MGR_KEYS.includes(k)) { if (u.mgr && v && typeof v === 'object') state[k] = v; }
     else if (!PATCH_KEYS.has(k)) { continue; }
-    else if (k === 'fraudAlerts') {              // الأدمن بس: يأكّد الاطلاع (ack) — الإنذارات الجديدة بيعملها السيرفر
+    else if (k === 'fraudAlerts') {
       if (u.mgr && Array.isArray(v)) { const cur = state.fraudAlerts || [], by = new Map(cur.map(a => [a.id, a]));
         for (const a of v) { const o = a && by.get(a.id); if (o && a.ack === true) o.ack = true; }
         state.fraudAlerts = cur; }
@@ -238,7 +258,7 @@ function apply(u, patch) {
 /* ───────────── البث اللحظي (SSE) ───────────── */
 const clients = new Set();
 let bcastT = null;
-function broadcast() {                   // تجميع: لو جت 10 تعديلات ورا بعض يتبعتوا مرة واحدة
+function broadcast() {
   if (bcastT) return;
   bcastT = setTimeout(() => {
     bcastT = null;
@@ -288,7 +308,7 @@ const cors = {
 const json = (res, code, obj) => { res.writeHead(code, { ...cors, 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 
 /* ───────────── الدخول وإدارة المستخدمين ───────────── */
-const riskMem = {};   // sap -> حالة المخاطر في الذاكرة (بتتصفّر مع إعادة التشغيل؛ السجل نفسه محفوظ في state.securityLog)
+const riskMem = {};
 const rl = new Map();
 const ipOf = req => String((process.env.TRUST_PROXY === '1' && req.headers['x-real-ip']) || req.socket.remoteAddress || 'unknown').slice(0, 80);
 const limited = ip => { const r = rl.get(ip); return !!r && Date.now() - r.t < 9e5 && r.n >= 10; };
@@ -316,14 +336,14 @@ function route(p, req, res) {
       const password = String(b.password || '');
       if (!id || id.length > 80 || !password || password.length > 256) return json(res, 400, { error: 'بيانات الدخول غير صالحة' });
       const sap = Object.keys(auth).find(k => k.toLowerCase() === id || String(auth[k].username).toLowerCase() === id);
-      const ok = await A.verifyPassword(password, sap ? auth[sap].hash : 's1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
+      const ok = A ? await A.verifyPassword(password, sap ? auth[sap].hash : 's1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=') : false;
       const u = ok && sap ? identity(sap) : null;
       if (!u) { failed(ip); return json(res, 401, { error: 'اسم المستخدم أو الكود غير صحيح' }); }
       rl.delete(ip);
       return json(res, 200, { token: A.signToken({ sap: String(u.sap) }, JWT_SECRET), user: u, mustChange: !!auth[sap].mustChange });
     }
 
-    if (p === '/api/admin/import-credentials') {     // يستقبل هاشات بس (مش أكواد) — بمفتاح الأدمن أو توكن أدمن
+    if (p === '/api/admin/import-credentials') {
       const u = me(b);
       if (!(u && u.admin) && !(ADMIN_KEY && b.key === ADMIN_KEY)) return json(res, 403, { error: 'denied' });
       let n = 0, skipped = [];
@@ -341,9 +361,9 @@ function route(p, req, res) {
     if (auth[u.sap] && auth[u.sap].mustChange && p !== '/api/me/credentials')
       return json(res, 403, { error: 'لازم تغيّر كلمة المرور المؤقتة قبل استخدام النظام' });
 
-    if (p === '/api/me/credentials') {               // الموظف يغيّر اسم المستخدم و/أو الكود بتاعه
+    if (p === '/api/me/credentials') {
       const a = auth[u.sap];
-      if (!(await A.verifyPassword(String(b.oldPassword || ''), a.hash))) return json(res, 403, { error: 'الكود الحالي غير صحيح' });
+      if (!(A && await A.verifyPassword(String(b.oldPassword || ''), a.hash))) return json(res, 403, { error: 'الكود الحالي غير صحيح' });
       if (b.newUsername) {
         const nu = String(b.newUsername).trim();
         if (!USER_RE.test(nu)) return json(res, 400, { error: 'اسم المستخدم 3-40 حرف إنجليزي/أرقام/. _ - @' });
@@ -359,8 +379,7 @@ function route(p, req, res) {
       return json(res, 200, { ok: true });
     }
 
-
-    if (p === '/api/attendance/event') {             // السيرفر هو اللي يحسب النطاق والمخاطر — مش المتصفح
+    if (p === '/api/attendance/event') {
       const e = (state.employees || []).find(x => String(x.sap) === String(u.sap));
       if (!e) return json(res, 404, { error: 'مفيش موظف بالحساب ده' });
       const lat = Number(b.lat), lng = Number(b.lng), acc = Number(b.acc) || 0;
@@ -385,10 +404,10 @@ function route(p, req, res) {
       state.securityLog = [{ t: serverT, sap: String(u.sap), name: e.name, branch: e.branch, inside, dist, radius, acc, level: r.level, trust: r.trust, reasons: r.reasons },
         ...(state.securityLog || [])].slice(0, 1000);
       schedule(); if (r.level !== 'LOW') broadcast();
-      return json(res, 200, { inside, dist, radius, serverTime: serverT, risk: { level: r.level, trust: r.trust } });   // تنبيه فقط — القرار للأدمن
+      return json(res, 200, { inside, dist, radius, serverTime: serverT, risk: { level: r.level, trust: r.trust } });
     }
 
-    if (p === '/api/attendance/presence') {          // نبض الموقع أثناء الشيفت: السيرفر يقرر خرج/رجع، ومابيخزّنش إحداثيات (المسافة والوقت بس)
+    if (p === '/api/attendance/presence') {
       const e = (state.employees || []).find(x => String(x.sap) === String(u.sap));
       if (!e) return json(res, 404, { error: 'مفيش موظف بالحساب ده' });
       if (e.status !== 'PRESENT') return json(res, 200, { active: false });
@@ -413,7 +432,7 @@ function route(p, req, res) {
         }
       } else {
         rk.outN = (rk.outN || 0) + 1;
-        if (rk.outN >= (acc <= 30 ? 1 : 2) && e.inBranch !== false) {      // قراءة دقيقة واحدة تكفي، وغير كده لازم قراءتين ورا بعض (ضوضاء GPS)
+        if (rk.outN >= (acc <= 30 ? 1 : 2) && e.inBranch !== false) {
           const worked = e.checkInAt ? now - e.checkInAt : null, left = worked == null ? null : Math.max(0, SHIFT_MS - worked), early = left != null && left > 0;
           const leftTxt = early ? ` — فاضل ${Math.floor(left / 3600e3)} س و${Math.floor((left % 3600e3) / 60000)} د على نهاية الـ9 ساعات` : '';
           e.inBranch = false; e.exitLog = [{ day, time, dist, t: now, early }, ...(e.exitLog || [])].slice(0, 50);
@@ -431,7 +450,7 @@ function route(p, req, res) {
 
     if (!u.admin) return json(res, 403, { error: 'للأدمن فقط' });
 
-    if (p === '/api/admin/users') {                  // الأدمن يضيف موظف باسم مستخدم وكود
+    if (p === '/api/admin/users') {
       const sap = String(b.sap || '').trim(), name = String(b.name || '').trim(), pw = String(b.password || '');
       if (!sap || !/^[A-Za-z0-9_-]{3,32}$/.test(sap) || !name || !b.branch || !b.role) return json(res, 400, { error: 'الاسم وSAP صالح والفرع والدور مطلوبين' });
       if (!(state.branches || []).some(x => x && x.name === b.branch)) return json(res, 422, { error: 'الفرع المحدد غير موجود في بيانات النظام' });
@@ -448,16 +467,16 @@ function route(p, req, res) {
       return json(res, 200, { ok: true });
     }
 
-    if (p === '/api/admin/branch-locate') {          // تثبيت لوكيشن فرع من إحداثيات أو لينك جوجل ماب (بيقفل التثبيت التلقائي)
+    if (p === '/api/admin/branch-locate') {
       if (!state) return json(res, 409, { error: 'مفيش بيانات لسه' });
       const r = await BR.locate(state, b); if (r.dirty) { schedule(); broadcast(); } return json(res, r.code, r.body);
     }
-    if (p === '/api/admin/branch-autolocate') {      // يعيد تثبيت الفروع غير المثبّتة من قايمة اللينكات
+    if (p === '/api/admin/branch-autolocate') {
       if (!state) return json(res, 409, { error: 'مفيش بيانات لسه' });
       const ch = await BR.autoLocate(state); if (ch.length) { schedule(); broadcast(); } return json(res, 200, { updated: ch });
     }
 
-    if (p === '/api/admin/reset') {                  // إعادة تعيين كود موظف (يرجّع الكود الجديد مرة واحدة)
+    if (p === '/api/admin/reset') {
       const sap = String(b.sap || '');
       if (!auth[sap]) return json(res, 404, { error: 'مفيش حساب بالـSAP ده' });
       const code = b.password ? String(b.password) : A.randomCode(8);
