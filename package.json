@@ -1,0 +1,23 @@
+{
+  "name": "bim-realtime",
+  "version": "2.1.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/auth.test.js && node test/engine.test.js && node test/ops-optical.test.js && node test/ops-api.test.js && node test/branches.test.js && node test/gate.test.js && node test/shift.test.js",
+    "cap:sync": "npx cap sync android",
+    "credentials:gen": "node scripts/credentials.js gen"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "8.11.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/android": "^6.2.0"
+  }
+}
