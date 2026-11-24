@@ -128,6 +128,17 @@ function schedule() {                    // تجميع الكتابات: كتا�
         auth.ADMIN = { username: process.env.ADMIN_USER, hash: await A.hashPassword(process.env.ADMIN_PASS), admin: true, name: 'أدمن المنظومة' };
         await saveAuth(); console.log('✅ اتعمل حساب الأدمن');
       }
+      if (process.env.CREDENTIALS_IMPORT) {   // استيراد هاشات الحسابات من متغير Railway (للي مش معاه كمبيوتر) — بيضيف الناقص بس ومابيكتبش فوق حساب موجود
+        try {
+          let n = 0; const _imp = JSON.parse(process.env.CREDENTIALS_IMPORT);
+          for (const x of (_imp.list || [])) {
+            const sap = String(x.sap || '');
+            if (!sap || (auth[sap] && !(_imp.overwrite && auth[sap].hash !== x.hash && !auth[sap].admin)) || !USER_RE.test(String(x.username)) || !/^s1\$/.test(String(x.hash))) continue;
+            auth[sap] = { username: x.username, hash: x.hash, mustChange: x.mustChange !== false }; n++;
+          }
+          if (n) { await saveAuth(); console.log('✅ اتستورد ' + n + ' حساب'); }
+        } catch (e) { console.error('CREDENTIALS_IMPORT مش صالح:', e.message); }
+      }
       ready = true;
       if (state) BR.autoLocate(state).then(ch => { if (ch.length) { console.log('📍 اتثبّت لوكيشن:', ch.join('، ')); schedule(); broadcast(); } }).catch(() => {});
       console.log(state ? '✅ البيانات اتحمّلت' : 'ℹ️  مفيش بيانات لسه — أول مدير يدخل هيرفعها');
