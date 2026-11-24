@@ -124,7 +124,7 @@ function schedule() {                    // تجميع الكتابات: كتا�
     try {
       state = sanitizeState(await loadState());
       auth = await loadAuth();
-      if (process.env.ADMIN_USER && process.env.ADMIN_PASS && !auth.ADMIN) {
+      if (process.env.ADMIN_USER && process.env.ADMIN_PASS && (!auth.ADMIN || process.env.ADMIN_RESET === '1')) {
         auth.ADMIN = { username: process.env.ADMIN_USER, hash: await A.hashPassword(process.env.ADMIN_PASS), admin: true, name: 'أدمن المنظومة' };
         await saveAuth(); console.log('✅ اتعمل حساب الأدمن');
       }
