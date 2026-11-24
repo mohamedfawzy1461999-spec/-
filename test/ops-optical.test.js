@@ -1,0 +1,30 @@
+'use strict';
+const assert = require('assert'), O = require('../engine/ops'), P = require('../engine/optical');
+let n = 0; const t = (name, f) => { f(); n++; console.log('✓', name); };
+t('Erlang C: M/M/1 يطابق ρ=0.5 → احتمال انتظار 0.5', () => { const r = O.erlangC(0.5, 1, 1); assert(Math.abs(r.pWait - 0.5) < 1e-9, r.pWait); assert(Math.abs(r.wq - 1) < 1e-9, r.wq); });
+t('Erlang C: نظام غير مستقر', () => assert.strictEqual(O.erlangC(3, 1, 2).stable, false));
+t('Erlang C: القيمة المرجعية c=2, a=1 → pWait=1/3', () => assert(Math.abs(O.erlangC(1, 1, 2).pWait - 1 / 3) < 1e-9));
+t('أقل عدد نقاط تسجيل للذروة', () => { const r = O.minServers(30, 10, 0.5); assert(r && r.c >= 4 && r.wq <= 0.5, JSON.stringify(r)); });
+t('Hungarian: مثال كلاسيكي 3×3 تكلفة 5', () => { const r = O.hungarian([[4, 1, 3], [2, 0, 5], [3, 2, 2]]); assert.strictEqual(r.cost, 5); });
+t('Hungarian: مستطيلة', () => assert.strictEqual(O.hungarian([[9, 2, 7], [3, 6, 1]]).cost, 3));
+t('جدولة: تغطية كاملة وعدالة <=1 لما الموظفين كفاية', () => {
+  const r = O.scheduleShifts({ staff: ['a', 'b', 'c', 'd', 'e', 'f'], days: 14, shifts: ['AM', 'PM'], need: { AM: 2, PM: 1 } });
+  assert.strictEqual(r.gaps.length, 0); assert(r.fairness <= 1, r.fairness); });
+t('جدولة: تكشف النقص لما الموظفين مش كفاية', () => assert(O.scheduleShifts({ staff: ['a'], days: 2, shifts: ['AM'], need: { AM: 2 } }).gaps.length === 2));
+const W = 32, H = 32, flat = new Uint8Array(W * H).fill(128), noisy = Uint8Array.from({ length: W * H }, (_, i) => ((i * 37) % 251));
+t('بصري: صورة مسطّحة = حدة صفر', () => assert.strictEqual(P.sharpness(flat, W, H), 0));
+t('بصري: صورة فيها تفاصيل أحدّ بكثير', () => assert(P.sharpness(noisy, W, H) > 1000));
+t('بصري: مسطّحة تتصنّف ضبابية', () => assert(P.assessPhoto(flat, W, H).reasons.some(r => r.includes('ضبابية'))));
+t('بصري: إضاءة ضعيفة تتكشف', () => assert(P.assessPhoto(new Uint8Array(W * H).fill(5), W, H).reasons.some(r => r.includes('إضاءة ضعيفة'))));
+t('بصري: نفس الصورة تتكشف كإعادة استخدام', () => { const a = P.assessPhoto(noisy, W, H); assert(P.assessPhoto(noisy, W, H, [a.hash]).reasons.some(r => r.includes('سابقة'))); });
+
+t('Erlang C: يرفض معدل خدمة صفري', () => assert.throws(() => O.erlangC(1, 0, 2), RangeError));
+t('Erlang C: وصول صفري ينتج انتظار صفري', () => { const r = O.erlangC(0, 2, 1); assert.strictEqual(r.pWait, 0); assert.strictEqual(r.wq, 0); });
+t('Hungarian: يرفض المصفوفة الفارغة وغير المستطيلة', () => { assert.throws(() => O.hungarian([]), TypeError); assert.throws(() => O.hungarian([[1, 2], [1]]), TypeError); });
+t('الجدولة: قائمة موظفين فارغة لا تنتج عدالة سالبة لا نهائية', () => { const r = O.scheduleShifts({ staff: [], days: 1, shifts: ['AM'], need: { AM: 1 } }); assert.strictEqual(r.fairness, 0); assert.strictEqual(r.gaps.length, 1); });
+t('الجدولة: ترفض احتياجاً سالباً', () => assert.throws(() => O.scheduleShifts({ staff: ['a'], days: 1, shifts: ['AM'], need: { AM: -1 } }), RangeError));
+t('بصري: يرفض أبعاد صورة غير مطابقة', () => assert.throws(() => P.sharpness(flat, 31, 32), RangeError));
+t('بصري: صورة صغيرة جداً لا تنتج NaN', () => assert.strictEqual(P.sharpness(new Uint8Array([1]), 1, 1), 0));
+t('بصري: يرفض بيانات RGBA غير مكتملة', () => assert.throws(() => P.gray(new Uint8Array([1, 2, 3])), TypeError));
+t('بصري: يرفض مقارنة بصمات بأطوال مختلفة', () => assert.throws(() => P.hamming('01', '1'), TypeError));
+console.log(`\n${n} اختبار نجح`);
