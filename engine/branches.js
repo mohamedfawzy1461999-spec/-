@@ -31,7 +31,7 @@ function parseCoords(text) {
 }
 
 async function coordsFromLink(url, fetchFn = fetch) {
-  const r = await fetchFn(url, { redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': UA, 'Accept-Language': 'ar,en;q=0.8' } });
+  const r = await fetchFn(url, { redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': UA, 'Accept-Language': 'en,ar;q=0.8' } });
   const finalUrl = r.url, html = await r.text();
   let name = ''; try { name = decodeURIComponent((finalUrl.match(/\/maps\/place\/([^/]+)/) || [])[1] || '').replace(/\+/g, ' '); } catch {}
   return { name, coords: parseCoords(finalUrl) || parseCoords(html) };
@@ -55,14 +55,14 @@ async function autoLocate(state, { network = true, fetchFn } = {}) {
 
 async function locate(state, { code, name, lat, lng, text }, fetchFn) {
   const b = (state.branches || []).find(x => x && ((code && x.code === code) || (name && x.name === name)));
-  if (!b) return { code: 404, body: { error: 'الفرع مش موجود' } };
+  if (!b) return { code: 404, body: { error: 'Branch not found' } };
   let c = null, place = '';
   if (lat != null && lng != null) { c = { lat: Number(lat), lng: Number(lng) }; if (!Number.isFinite(c.lat) || !Number.isFinite(c.lng) || !inRegion(c.lat, c.lng)) c = null; }
   else if (text) {
     const t = String(text).trim(); c = parseCoords(t);
     if (!c && /^https?:\/\//.test(t)) { try { const r = await coordsFromLink(t, fetchFn); c = r.coords; place = r.name; } catch {} }
   }
-  if (!c) return { code: 400, body: { error: 'مقدرتش أطلع إحداثيات داخل نطاق الإسماعيلية. ابعت lat و lng أو لينك جوجل ماب' } };
+  if (!c) return { code: 400, body: { error: 'Could not extract coordinates within region. Provide lat/lng or a Google Maps link' } };
   b.coords = fmt(c); b.linkedByUser = true; delete b.autoLocated;
   return { code: 200, body: { ok: true, branch: b.name, coords: b.coords, place_name: place }, dirty: true };
 }
